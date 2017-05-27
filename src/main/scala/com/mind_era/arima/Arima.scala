@@ -1608,7 +1608,11 @@ import spire.algebra.{Eq, Field, Rig}
 import scala.collection.immutable.BitSet
 import scala.reflect.ClassTag
 
-case class Order(p: Natural, q: Natural, d: Natural)
+case class Order(p: Natural, d: Natural, q: Natural) {
+  def _1: Natural = p
+  def _2: Natural = d
+  def _3: Natural = q
+}
 
 object Order {
   def apply(): Order = Order(Natural.zero, Natural.zero, Natural.zero)
@@ -1662,14 +1666,14 @@ case class ArimaResult[V: Eq : Field](coefficients: IndexedSeq[V], sigma2: V, va
   * Created by aborg on 20/05/2017.
   */
 case class Arima[@specialized(Double) V: Eq : Field](x: Vec[V], order: Order = Order(),
-                                seasonalParam: Option[Seasonal] = Some(Seasonal(Order(), None)),
-                                xReg: Option[Mat[V]] = None, includeMean: Boolean = true,
-                                transformPars: Boolean = true, fixed: Option[IndexedSeq[V]] = None,
-                                init: Option[IndexedSeq[V]] = None,
-                                method: ArimaLearningMethod = CssMl, nCond: Option[Natural],
-                                ssInit: SsInit = Rossignol2011,
-                                optimizationMethod: OptimizationMethod = BFGS,
-                                optimizationControl: Seq[Any] = Seq(), kappa: Double = 1e6) {
+                                                     seasonalParam: Option[Seasonal] = Some(Seasonal(Order(), None)),
+                                                     var xReg: Option[Mat[V]] = None, includeMean: Boolean = true,
+                                                     transformPars: Boolean = true, fixed: Option[IndexedSeq[V]] = None,
+                                                     init: Option[IndexedSeq[V]] = None,
+                                                     method: ArimaLearningMethod = CssMl, nCondOpt: Option[Natural],
+                                                     ssInit: SsInit = Rossignol2011,
+                                                     optimizationMethod: OptimizationMethod = BFGS,
+                                                     optimizationControl: Seq[Any] = Seq(), kappa: Double = 1e6) {
 
   import Arima._
 
@@ -1685,6 +1689,25 @@ case class Arima[@specialized(Double) V: Eq : Field](x: Vec[V], order: Order = O
     (Natural.one to order.d).foldLeft(Vec[V](Ring.one))((acc, _) => convolutionVec(acc, `1, -1`)))(
     (acc, _) => convolutionVec(acc, `1, seasonalPeriod-1 0s, -1`)
   ).toIndexedSeq.tail)
+  val nd = order.d + seasonal.order.d
+  // Assuming all data is present
+  val nUsed = x.length - delta.length
+  xReg.foreach(m => require(m.nRows == x.length, s"Wrong length for xReg: ${m.nRows} for x: ${x.length}"))
+  val ncxreg = xReg.map(mat => mat.nCols).getOrElse(0)
+  if (includeMean && nd == 0) {
+    xReg = Some(if (xReg.isEmpty)
+      Mat.tabulate(n, 1)((_, _) => Ring.one[V])
+    else
+      Mat.tabulate(n, 1)((_, _) => Ring.one[V]).horzcat(xReg.get))
+  }
+  // No missing values in x, so no need to change CssMl to Ml in that case
+
+  val nCond: Natural = method match {
+    case Css | CssMl =>
+      val nCond1 = order.p + seasonal.period.get * seasonal.order.p
+      order.d + seasonal.order.d * seasonal.period.get + (nCond1 max nCondOpt.getOrElse(Natural.zero))
+    case Ml => Natural.zero
+  }
 }
 
 object Arima {
