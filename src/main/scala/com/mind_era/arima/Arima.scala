@@ -1603,6 +1603,7 @@ import scalin.{Mat, Vec}
 import scalin.syntax.assign._
 import scalin.mutable._
 import scalin.mutable.dense._
+import scribe.Logging
 import spire.algebra.{Eq, Field, Rig}
 
 import scala.collection.immutable.BitSet
@@ -1668,32 +1669,32 @@ case class ArimaResult[V: Eq : Field](coefficients: IndexedSeq[V], sigma2: V, va
 case class Arima[@specialized(Double) V: Eq : Field](x: Vec[V], order: Order = Order(),
                                                      seasonalParam: Option[Seasonal] = Some(Seasonal(Order(), None)),
                                                      var xReg: Option[Mat[V]] = None, includeMean: Boolean = true,
-                                                     transformPars: Boolean = true, fixed: Option[IndexedSeq[V]] = None,
+                                                     var transformPars: Boolean = true, var fixed: Option[IndexedSeq[Option[V]]] = None,
                                                      init: Option[IndexedSeq[V]] = None,
                                                      method: ArimaLearningMethod = CssMl, nCondOpt: Option[Natural],
                                                      ssInit: SsInit = Rossignol2011,
                                                      optimizationMethod: OptimizationMethod = BFGS,
-                                                     optimizationControl: Seq[Any] = Seq(), kappa: Double = 1e6) {
+                                                     optimizationControl: Seq[Any] = Seq(), kappa: Double = 1e6) extends Logging {
 
   import Arima._
 
-  val series = x.toVec
-  val n = series.length
-  val seasonal = seasonalValue(seasonalParam)
+  val series: DenseVec[V] = x.toVec
+  val n: Int = series.length
+  val seasonal: Seasonal = seasonalValue(seasonalParam)
   val arma: IndexedSeq[Natural] = Vector(order.p, order.q, seasonal.order.p, seasonal.order.q, seasonal.period.get,
     order.d, seasonal.order.d)
   val nArma: Natural = arma.take(4).reduce(_ + _)
   val `1, -1`: Vec[V] = oneMinusOne
-  val `1, seasonalPeriod-1 0s, -1` = Vec.ones[V](1) + Vec.zeros[V](seasonal.period.get.toInt - 1) + Vec[V](-Ring.one)
+  val `1, seasonalPeriod-1 0s, -1`: DenseVec[V] = Vec.ones[V](1) + Vec.zeros[V](seasonal.period.get.toInt - 1) + Vec[V](-Ring.one)
   val delta: Vec[V] = -Vec.fromSeq((Natural.one to seasonal.order.d).foldLeft(
     (Natural.one to order.d).foldLeft(Vec[V](Ring.one))((acc, _) => convolutionVec(acc, `1, -1`)))(
     (acc, _) => convolutionVec(acc, `1, seasonalPeriod-1 0s, -1`)
   ).toIndexedSeq.tail)
-  val nd = order.d + seasonal.order.d
+  val nd: Natural = order.d + seasonal.order.d
   // Assuming all data is present
-  val nUsed = x.length - delta.length
+  val nUsed: Int = x.length - delta.length
   xReg.foreach(m => require(m.nRows == x.length, s"Wrong length for xReg: ${m.nRows} for x: ${x.length}"))
-  val ncxreg = xReg.map(mat => mat.nCols).getOrElse(0)
+  val ncxreg: Int = xReg.map(mat => mat.nCols).getOrElse(0)
   if (includeMean && nd == 0) {
     xReg = Some(if (xReg.isEmpty)
       Mat.tabulate(n, 1)((_, _) => Ring.one[V])
@@ -1707,6 +1708,24 @@ case class Arima[@specialized(Double) V: Eq : Field](x: Vec[V], order: Order = O
       val nCond1 = order.p + seasonal.period.get * seasonal.order.p
       order.d + seasonal.order.d * seasonal.period.get + (nCond1 max nCondOpt.getOrElse(Natural.zero))
     case Ml => Natural.zero
+  }
+  fixed.foreach(seq => require(seq.length == nArma + ncxreg, s"Wrong length for fix: ${seq.length}, should be ${nArma + ncxreg}"))
+  fixed = fixed.orElse(Some(Vector.fill((nArma + ncxreg).toInt)(None)))
+  val mask: IndexedSeq[Boolean] = fixed.get.map(_.nonEmpty)
+  val noOptim: Boolean = mask.exists(!_)
+  if (noOptim) transformPars = false
+  var ind: IndexedSeq[Natural] = _
+  if (transformPars) {
+    ind = ((arma(0) + arma(1)).toInt until arma.take(3).reduce(_ + _).toInt).map(n => Natural(n))
+    if (mask.take(arma(0).toInt).exists(v => v) || ind.view.map(i =>mask(i.toInt)).exists(v => v)) {
+      logger.warn("Some AR parameters are fixed, turning off transformPars")
+      transformPars = false
+    }
+  }
+  val init0: Vec[V] = Vec.tabulate(nArma.toInt)(_ => Ring.zero[V])
+  val parScale: Vec[V] = Vec.tabulate(nArma.toInt)(_ => Ring.one[V])
+  if (ncxreg > 0) {
+
   }
 }
 
