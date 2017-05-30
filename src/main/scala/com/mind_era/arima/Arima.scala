@@ -1597,6 +1597,7 @@ SEXP getQ0(SEXP sPhi, SEXP sTheta)
 
 import algebra.ring.Ring
 import cats.data._
+import scalin.algos.RankFactorization
 import spire.implicits._
 import spire.math._
 import scalin.{Mat, Vec}
@@ -1724,8 +1725,24 @@ case class Arima[@specialized(Double) V: Eq : Field](x: Vec[V], order: Order = O
   }
   val init0: Vec[V] = Vec.tabulate(nArma.toInt)(_ => Ring.zero[V])
   val parScale: Vec[V] = Vec.tabulate(nArma.toInt)(_ => Ring.one[V])
-  if (ncxreg > 0) {
 
+
+  if (ncxreg > 0) {
+    val origXreg: Boolean = ncxreg == 1 || (nArma.toInt until (nArma.toInt + ncxreg)).map(i => mask(i)).exists(v => v)
+    if (!origXreg) {
+      val SVD(_, _, v) = svd(xReg.get)
+      xReg = xReg.map(mat => mat * v)
+    }
+    var dx = x
+    var dxReg = xReg.get
+    if (order.d > Natural.zero) {
+      dx = diff(dx, Natural.one, order.d)
+      dxReg = diff(dxReg, Natural.one, order.d)
+    }
+    if (seasonal.period.get > Natural.one && seasonal.order.d > Natural.zero) {
+      dx = diff(dx, seasonal.period.get, seasonal.order.d)
+      dxReg = diff(dxReg, seasonal.period.get, seasonal.order.d)
+    }
   }
 }
 
@@ -1755,5 +1772,20 @@ object Arima {
       for (j <- 0 until bs.length)
         res.set(i + j,  as(i) * bs(j))
     res
+  }
+
+  case class SVD[V: Eq: Field](u: Mat[V], d: Vec[V]/*Diag[V] would be better*/, v: Mat[V])
+
+  def svd[V: Eq: Field](matrix: Mat[V]): SVD[V] = ???
+  def diff[V: Eq: Field](dx: Vec[V], lag: Natural, d: Natural): Vec[V] = {
+    require(lag > Natural.zero)
+    require(d > Natural.zero)
+    d match {
+      case Natural.one => Vec.fromSeq((0 to (dx.length - lag.toInt)).map(i => dx(i + lag.toInt) - dx(i)))
+      case _ => diff(diff(dx, lag, d - Natural.one), lag, Natural.one)
+    }
+  }
+  def diff[V: Eq: Field](dx: Mat[V], lag: Natural, d: Natural): Mat[V] = {
+    dx.colSeq.map(diff(_, lag, d).toColMat).reduce((col1, col2) => col1.horzcat(col2))
   }
 }
