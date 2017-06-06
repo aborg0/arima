@@ -1682,11 +1682,13 @@ case class Arima[@specialized(Double) V: Eq : Field](x: Vec[V], order: Order = O
   val series: DenseVec[V] = x.toVec
   val n: Int = series.length
   val seasonal: Seasonal = seasonalValue(seasonalParam)
-  val arma: IndexedSeq[Natural] = Vector(order.p, order.q, seasonal.order.p, seasonal.order.q, seasonal.period.get,
+  private val seasonalPeriod = seasonal.period.get
+  val arma: IndexedSeq[Natural] = Vector(order.p, order.q, seasonal.order.p, seasonal.order.q, seasonalPeriod,
     order.d, seasonal.order.d)
   val nArma: Natural = arma.take(4).reduce(_ + _)
   val `1, -1`: Vec[V] = oneMinusOne
-  val `1, seasonalPeriod-1 0s, -1`: DenseVec[V] = Vec.ones[V](1) + Vec.zeros[V](seasonal.period.get.toInt - 1) + Vec[V](-Ring.one)
+  val `1, seasonalPeriod-1 0s, -1`: DenseVec[V] = Vec.ones[V](1) + Vec.zeros[V](seasonalPeriod.toInt - 1) + Vec[V](
+    Ring.negate(Ring.one))
   val delta: Vec[V] = -Vec.fromSeq((Natural.one to seasonal.order.d).foldLeft(
     (Natural.one to order.d).foldLeft(Vec[V](Ring.one))((acc, _) => convolutionVec(acc, `1, -1`)))(
     (acc, _) => convolutionVec(acc, `1, seasonalPeriod-1 0s, -1`)
@@ -1706,8 +1708,8 @@ case class Arima[@specialized(Double) V: Eq : Field](x: Vec[V], order: Order = O
 
   val nCond: Natural = method match {
     case Css | CssMl =>
-      val nCond1 = order.p + seasonal.period.get * seasonal.order.p
-      order.d + seasonal.order.d * seasonal.period.get + (nCond1 max nCondOpt.getOrElse(Natural.zero))
+      val nCond1 = order.p + seasonalPeriod * seasonal.order.p
+      order.d + seasonal.order.d * seasonalPeriod + (nCond1 max nCondOpt.getOrElse(Natural.zero))
     case Ml => Natural.zero
   }
   fixed.foreach(seq => require(seq.length == nArma + ncxreg, s"Wrong length for fix: ${seq.length}, should be ${nArma + ncxreg}"))
@@ -1739,15 +1741,16 @@ case class Arima[@specialized(Double) V: Eq : Field](x: Vec[V], order: Order = O
       dx = diff(dx, Natural.one, order.d)
       dxReg = diff(dxReg, Natural.one, order.d)
     }
-    if (seasonal.period.get > Natural.one && seasonal.order.d > Natural.zero) {
-      dx = diff(dx, seasonal.period.get, seasonal.order.d)
-      dxReg = diff(dxReg, seasonal.period.get, seasonal.order.d)
+    if (seasonalPeriod > Natural.one && seasonal.order.d > Natural.zero) {
+      dx = diff(dx, seasonalPeriod, seasonal.order.d)
+      dxReg = diff(dxReg, seasonalPeriod, seasonal.order.d)
     }
+    //dxReg.inverse
   }
 }
 
 object Arima {
-  private def oneMinusOne[V: Ring]: Vec[V] = Vec(Ring.one, -Rig.one)
+  private def oneMinusOne[V: Ring]: Vec[V] = Vec(Ring.one, Ring.negate(Rig.one))
   private def seasonalValue(seasonalParam: Option[Seasonal]): Seasonal = {
     seasonalParam.map(s => s.copy(period = Some(s.period.map(p =>
       if (p == Natural.zero)
