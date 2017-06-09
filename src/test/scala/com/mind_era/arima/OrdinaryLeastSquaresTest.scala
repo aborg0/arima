@@ -2,8 +2,12 @@ package com.mind_era.arima
 
 import com.mind_era.arima.OrdinaryLeastSquares.{Result, SimpleCoeff, XY}
 import org.scalatest.FreeSpec
+import org.scalatest.Matchers._
+import org.scalactic._
 import spire.math.Rational
+import spire.implicits._
 import scalin.mutable._
+import scalin.mutable.dense._
 import scalin.syntax._
 
 /**
@@ -24,8 +28,11 @@ class OrdinaryLeastSquaresTest extends FreeSpec {
       val ys: IndexedSeq[Rational] =
         "52.21\t53.12\t54.48\t55.84\t57.20\t58.57\t59.93\t61.29\t63.11\t64.47\t66.28\t68.10\t69.92\t72.19\t74.46".split(
           '\t').map(Rational(_))
-//      val result = OrdinaryLeastSquares.ols(xs.zip(ys).map((pair) => XY(pair._1, pair._2)))
-//      assert(Result[Rational, SimpleCoeff[Rational]](intercept = SimpleCoeff(Rational(1288128L, 10000L)), beta = Vector(), diff=Vector()) === result)
+      val Result(SimpleCoeff(intercept), Seq(SimpleCoeff(beta1), SimpleCoeff(beta2)), _) =
+        OrdinaryLeastSquares.ols(xs.zip(ys).map((pair) => XY(IndexedSeq(pair._1, pair._1 * pair._1), pair._2)))
+      assert(intercept.toDouble === 128.8128 +- 5e-5)
+      assert(beta1.toDouble === -143.1620 +- 5e-5)
+      assert(beta2.toDouble === 61.9603 +- 5e-5)
     }
 
   }
