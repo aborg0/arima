@@ -1,6 +1,7 @@
 package com.mind_era.arima
 
 import algebra.ring.{Field, Ring}
+import com.mind_era.arima.OrdinaryLeastSquares.XY
 
 import scala.math.Numeric._
 import scalin.{DenseMat, Pivot}
@@ -17,10 +18,12 @@ import scala.math.ScalaNumber
   *
   * Based on https://en.wikipedia.org/w/index.php?title=Ordinary_least_squares&oldid=776500856
   */
-object OrdinaryLeastSquares {
-  case class XY[V: Eq: Field](x: IndexedSeq[V], y: V)
+object OrdinaryLeastSquares extends OLSTrait {
+
+  case class XY[V: Eq : Field](x: IndexedSeq[V], y: V)
+
   object XY {
-    def apply[V: Eq: Field](x: V, y: V): XY[V] = {
+    def apply[V: Eq : Field](x: V, y: V): XY[V] = {
       XY(SingleValue(x), y)
     }
   }
@@ -30,17 +33,23 @@ object OrdinaryLeastSquares {
   }
 
   case class Result[V: Field, C <: Coefficient[V]](intercept: C,
-                                                       beta: IndexedSeq[C]/*d*/,
-                                                       diff/*epsilon*/: IndexedSeq[V]/*n*/)
+                                                   beta: IndexedSeq[C] /*d*/ ,
+                                                   diff /*epsilon*/ : IndexedSeq[V] /*n*/)
 
   final case class SimpleCoeff[V: Field](value: V) extends Coefficient[V]
 
-  final case class CoefficientErrors[V: Field, ErrV: Field: NRoot](value: V, stdError: ErrV, t: ErrV, p: Double)
+  final case class CoefficientErrors[V: Field, ErrV: Field : NRoot](value: V, stdError: ErrV, t: ErrV, p: Double)
     extends Coefficient[V]
 
-  final case class NDimCoefficient[V: Eq: Field: Coefficient](coefficients: IndexedSeq[V])
+  final case class NDimCoefficient[V: Eq : Field : Coefficient](coefficients: IndexedSeq[V])
 
-  private def createMatX[V: Field](values: IndexedSeq[XY[V]]): scalin.mutable.DenseMat[V] = DenseMat.tabulate(
+  case class BetaDiff[V](beta: Mat[V], diff: Mat[V], `(xᵀx)⁻¹`: Mat[V])
+
+}
+
+trait OLSTrait {
+  import OrdinaryLeastSquares._
+  protected def createMatX[V: Field](values: IndexedSeq[XY[V]]): scalin.mutable.DenseMat[V] = DenseMat.tabulate(
     values.length, 1 + values(0).x.length)((row, col) => if (col == 0) Ring.one else values(row).x(col - 1))
 
   def ols[V: Field: MatEngine: Pivot: VecEngine](values: IndexedSeq[XY[V]] /*length n*/)(
@@ -54,9 +63,7 @@ object OrdinaryLeastSquares {
     )
   }
 
-  case class BetaDiff[V](beta: Mat[V], diff: Mat[V], `(xᵀx)⁻¹`: Mat[V])
-
-  private def olsBetaDiff[V: Field : MatEngine : Pivot : VecEngine](values: IndexedSeq[XY[V]])(
+  protected def olsBetaDiff[V: Field : MatEngine : Pivot : VecEngine](values: IndexedSeq[XY[V]])(
     implicit denseInverse: Inverse[V, Mat[V]]): BetaDiff[V] = {
     val matX: Mat[V] = createMatX(values)
     val matXT: Mat[V] = matX.t
@@ -116,4 +123,45 @@ object OrdinaryLeastSquares {
   }
 }
 
+object OrdinaryLeastSquaresWithoutIntercept extends OLSTrait {
+  import OrdinaryLeastSquares._
+
+  protected override def createMatX[V: Field](values: IndexedSeq[XY[V]]): scalin.mutable.DenseMat[V] = DenseMat.tabulate(
+    values.length, values(0).x.length)((row, col) => values(row).x(col))
+
+  override def ols[V: Field: MatEngine: Pivot: VecEngine](values: IndexedSeq[XY[V]] /*length n*/)(
+    implicit denseInverse: Inverse[V, Mat[V]]): Result[V, SimpleCoeff[V]] = {
+    val BetaDiff(beta, diff, _) = olsBetaDiff(values)
+
+    Result(
+      SimpleCoeff(Ring.zero),
+      beta = beta(::, 0).toIndexedSeq.map(SimpleCoeff(_)),
+      diff = diff(::, 0).toIndexedSeq
+    )
+  }
+
+  override def olsWithErrors[V: Field: MatEngine: Pivot: VecEngine, ErrV <: ScalaNumber: Field: NRoot](values: IndexedSeq[XY[V]])(
+    implicit inverse: Inverse[V, Mat[V]], conv: Convert[V, ErrV]): Result[V, CoefficientErrors[V, ErrV]] = {
+    val BetaDiff(beta, diff, xTxInverse) = olsBetaDiff(values)
+    val `(xᵀx)⁻¹`: Mat[V] = xTxInverse
+    val diffVec: Vec[V] = diff(::, 0)
+    val nV: V = Ring.fromInt[V](values.length - values(0).x.length - 1)
+    // val sSquare = diff.t * diff / (values.length - values(0).x.length)
+    val sigmaHatSquare: V = diffVec.dot(diffVec) / nV
+    def sigmaHatJ(j: Int): ErrV = {
+      val xTxJ: V = xTxInverse(j, j)
+      val square: V = Field.times(sigmaHatSquare, xTxJ)
+      conv.to(square).sqrt
+    }
+
+    //val interceptT = conv.to(beta(0, 0)) / sigmaHatJ(0)
+    Result(CoefficientErrors[V, ErrV](Ring.zero[V], Ring.zero[ErrV], Ring.zero[ErrV], pValue(Ring.zero[ErrV], /*sigmaHatJ(0)*/Ring.one[ErrV])),
+      beta = beta(::, 0).toIndexedSeq.zipWithIndex.map(tuple => {
+        val i: Int = tuple._2
+        val t = conv.to(beta(i, 0)) / sigmaHatJ(i)
+        CoefficientErrors[V, ErrV](tuple._1, sigmaHatJ(i), t, pValue(t, sigmaHatJ(i)))
+      }
+      ), diff = diff(::, 0).toIndexedSeq)
+  }
+}
 
