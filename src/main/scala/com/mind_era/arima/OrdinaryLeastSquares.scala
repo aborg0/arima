@@ -145,7 +145,7 @@ object OrdinaryLeastSquaresWithoutIntercept extends OLSTrait {
     val BetaDiff(beta, diff, xTxInverse) = olsBetaDiff(values)
     val `(xᵀx)⁻¹`: Mat[V] = xTxInverse
     val diffVec: Vec[V] = diff(::, 0)
-    val nV: V = Ring.fromInt[V](values.length - values(0).x.length - 1)
+    val nV: V = Ring.fromInt[V](values.length - values(0).x.length)
     // val sSquare = diff.t * diff / (values.length - values(0).x.length)
     val sigmaHatSquare: V = diffVec.dot(diffVec) / nV
     def sigmaHatJ(j: Int): ErrV = {

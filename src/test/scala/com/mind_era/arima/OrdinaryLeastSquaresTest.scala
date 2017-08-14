@@ -106,16 +106,16 @@ class OrdinaryLeastSquaresTest extends FreeSpec {
           inside(beta1Cont) {
             case CoefficientErrors(beta1, b1StdErr, b1t, b1p) => {
               assert(beta1.toDouble === 13.4211 +- 5e-5)
-//              assert(b1StdErr.toDouble === 1.4323 +- 5e-5)
-//              assert(b1t.toDouble === 9.37 +- 5e-3)
+              assert(b1StdErr.toDouble === 1.4323 +- 5e-5)
+              assert(b1t.toDouble === 9.37 +- 5e-3)
               assert(b1p.toDouble === 0d +- 5e-5)
             }
           }
           inside(beta2Cont) {
             case CoefficientErrors(beta2, b2StdErr, b2t, b2p) => {
               assert(beta2.toDouble === 14.5867 +- 5e-5)
-//              assert(b2StdErr.toDouble === 0.8582 +- 5e-5)
-//              assert(b2t.toDouble === 17d +- 5e-3)
+              assert(b2StdErr.toDouble === 0.8582 +- 5e-5)
+              assert(b2t.toDouble === 17d +- 5e-3)
               assert(b2p.toDouble === 0d +- 5e-5)
             }
           }
