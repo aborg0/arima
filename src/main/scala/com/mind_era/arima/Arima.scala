@@ -1595,19 +1595,21 @@ SEXP getQ0(SEXP sPhi, SEXP sTheta)
 }
 */
 
-import algebra.ring.Ring
+//import algebra.ring.{Ring}
 import cats.data._
+import com.mind_era.arima.OrdinaryLeastSquares.XY
 import scalin.algos.RankFactorization
 import spire.implicits._
 import spire.math._
-import scalin.{Mat, Vec}
+import scalin.{Mat, Pivot, Vec}
 import scalin.syntax.assign._
 import scalin.mutable._
 import scalin.mutable.dense._
 import scribe.Logging
-import spire.algebra.{Eq, Field, Rig}
+import spire.algebra.{Eq, Field, NRoot, Ring, Rig}
 
 import scala.collection.immutable.BitSet
+import scala.math.ScalaNumber
 import scala.reflect.ClassTag
 
 case class Order(p: Natural, d: Natural, q: Natural) {
@@ -1667,15 +1669,15 @@ case class ArimaResult[V: Eq : Field](coefficients: IndexedSeq[V], sigma2: V, va
 /**
   * Created by aborg on 20/05/2017.
   */
-case class Arima[@specialized(Double) V: Eq : Field](x: Vec[V], order: Order = Order(),
-                                                     seasonalParam: Option[Seasonal] = Some(Seasonal(Order(), None)),
-                                                     var xReg: Option[Mat[V]] = None, includeMean: Boolean = true,
-                                                     var transformPars: Boolean = true, var fixed: Option[IndexedSeq[Option[V]]] = None,
-                                                     init: Option[IndexedSeq[V]] = None,
-                                                     method: ArimaLearningMethod = CssMl, nCondOpt: Option[Natural],
-                                                     ssInit: SsInit = Rossignol2011,
-                                                     optimizationMethod: OptimizationMethod = BFGS,
-                                                     optimizationControl: Seq[Any] = Seq(), kappa: Double = 1e6) extends Logging {
+case class Arima[@specialized(Double) V: Eq : Field: Pivot, ErrV <: ScalaNumber: Field: NRoot](x: Vec[V], order: Order = Order(),
+                                                                               seasonalParam: Option[Seasonal] = Some(Seasonal(Order(), None)),
+                                                                               var xReg: Option[Mat[V]] = None, includeMean: Boolean = true,
+                                                                               var transformPars: Boolean = true, var fixed: Option[IndexedSeq[Option[V]]] = None,
+                                                                               init: Option[IndexedSeq[V]] = None,
+                                                                               method: ArimaLearningMethod = CssMl, nCondOpt: Option[Natural],
+                                                                               ssInit: SsInit = Rossignol2011,
+                                                                               optimizationMethod: OptimizationMethod = BFGS,
+                                                                               optimizationControl: Seq[Any] = Seq(), kappa: Double = 1e6)(implicit val conv: Convert[V, ErrV]) extends Logging {
 
   import Arima._
 
@@ -1688,14 +1690,14 @@ case class Arima[@specialized(Double) V: Eq : Field](x: Vec[V], order: Order = O
   val nArma: Natural = arma.take(4).reduce(_ + _)
   val `1, -1`: Vec[V] = oneMinusOne
   val `1, seasonalPeriod-1 0s, -1`: DenseVec[V] = Vec.ones[V](1) + Vec.zeros[V](seasonalPeriod.toInt - 1) + Vec[V](
-    Ring.negate(Ring.one))
+    Ring.negate(Ring.one[V]))
   val delta: Vec[V] = -Vec.fromSeq((Natural.one to seasonal.order.d).foldLeft(
-    (Natural.one to order.d).foldLeft(Vec[V](Ring.one))((acc, _) => convolutionVec(acc, `1, -1`)))(
+    (Natural.one to order.d).foldLeft(Vec[V](Ring.one[V]))((acc, _) => convolutionVec(acc, `1, -1`)))(
     (acc, _) => convolutionVec(acc, `1, seasonalPeriod-1 0s, -1`)
   ).toIndexedSeq.tail)
   val nd: Natural = order.d + seasonal.order.d
   // Assuming all data is present
-  val nUsed: Int = x.length - delta.length
+  var nUsed: Int = x.length - delta.length
   xReg.foreach(m => require(m.nRows == x.length, s"Wrong length for xReg: ${m.nRows} for x: ${x.length}"))
   val ncxreg: Int = xReg.map(mat => mat.nCols).getOrElse(0)
   if (includeMean && nd == 0) {
@@ -1725,8 +1727,8 @@ case class Arima[@specialized(Double) V: Eq : Field](x: Vec[V], order: Order = O
       transformPars = false
     }
   }
-  val init0: Vec[V] = Vec.tabulate(nArma.toInt)(_ => Ring.zero[V])
-  val parScale: Vec[V] = Vec.tabulate(nArma.toInt)(_ => Ring.one[V])
+  var init0: Vec[V] = Vec.tabulate(nArma.toInt)(_ => Ring.zero[V])
+  var parScale: Vec[ErrV] = Vec.tabulate(nArma.toInt)(_ => Ring.one[ErrV])
 
 
   if (ncxreg > 0) {
@@ -1735,8 +1737,8 @@ case class Arima[@specialized(Double) V: Eq : Field](x: Vec[V], order: Order = O
       val SVD(_, _, v) = svd(xReg.get)
       xReg = xReg.map(mat => mat * v)
     }
-    var dx = x
-    var dxReg = xReg.get
+    var dx: Vec[V] = x
+    var dxReg: Mat[V] = xReg.get
     if (order.d > Natural.zero) {
       dx = diff(dx, Natural.one, order.d)
       dxReg = diff(dxReg, Natural.one, order.d)
@@ -1745,6 +1747,17 @@ case class Arima[@specialized(Double) V: Eq : Field](x: Vec[V], order: Order = O
       dx = diff(dx, seasonalPeriod, seasonal.order.d)
       dxReg = diff(dxReg, seasonalPeriod, seasonal.order.d)
     }
+    val fit: OrdinaryLeastSquares.Result[V, OrdinaryLeastSquares.CoefficientErrors[V, ErrV]] = (if (dx.length > dxReg.nCols) {
+      val ols = OrdinaryLeastSquaresWithoutIntercept.olsWithErrors[V, ErrV](dx.toIndexedSeq.zip(dxReg.rowSeq).map{case (y, xs) => XY(xs.toIndexedSeq, y)})
+      if (ols.beta.exists(c => c.value != Ring.zero[V])) Some(ols) else None
+    } else {
+      xReg.map(mat => OrdinaryLeastSquaresWithoutIntercept.olsWithErrors[V, ErrV](x.toIndexedSeq.zip(mat.rowSeq).map{case (y, xs) => XY(xs.toIndexedSeq, y)}))
+    }).getOrElse(OrdinaryLeastSquaresWithoutIntercept.olsWithErrors[V, ErrV](x.toIndexedSeq.zip(xReg.get.rowSeq).map{case (y, xs) => XY(xs.toIndexedSeq, y)}))
+    val sumNAs = 0
+    nUsed = x.length - sumNAs - delta.length
+    init0 = init0 ++ Vec(fit.beta.map(_.value): _*)
+//    val ses = fit.beta.map(_.stdError).sum
+//    parScale = parScale ++ Vec(10 * ses)
     //dxReg.inverse
   }
 }
