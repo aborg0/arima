@@ -91,8 +91,30 @@ class OrdinaryLeastSquaresTest extends FreeSpec {
       val ys: IndexedSeq[Rational] =
         "52.21\t53.12\t54.48\t55.84\t57.20\t58.57\t59.93\t61.29\t63.11\t64.47\t66.28\t68.10\t69.92\t72.19\t74.46".split(
           '\t').map(Rational(_))
+      // R> x <- c(1.47, 1.5, 1.52, 1.55, 1.57, 1.6, 1.63, 1.65, 1.68, 1.7, 1.73, 1.75, 1.78, 1.8, 1.83)
+      // R> y <- c(52.21, 53.12, 54.48, 55.84, 57.2, 58.57, 59.93, 61.29, 63.11, 64.47, 66.28, 68.1, 69.92, 72.19, 74.46)
+
       val result: Result[Rational, CoefficientErrors[Rational, Real]] = OrdinaryLeastSquaresWithoutIntercept.olsWithErrors[Rational, Real](xs.zip(ys).map((pair) =>
         XY(IndexedSeq(pair._1, pair._1 * pair._1), pair._2)))
+      // R> x2 <- x * x
+      // R> summary(lm(formula = y ~ x + x2 - 1, na.action = na.omit))
+      //Call:
+      //  lm(formula = y ~ x + x2 - 1, na.action = na.omit)
+      //
+      //Residuals:
+      //  Min       1Q   Median       3Q      Max
+      //-0.70194 -0.53442 -0.05886  0.27634  1.04981
+      //
+      //Coefficients:
+      //  Estimate Std. Error t value Pr(>|t|)
+      //x   13.4211     1.4323    9.37 3.81e-07 ***
+      //  x2  14.5867     0.8582   17.00 2.93e-10 ***
+      //  ---
+      //Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+      //
+      //Residual standard error: 0.6018 on 13 degrees of freedom
+      //  Multiple R-squared:  0.9999,	Adjusted R-squared:  0.9999
+      //F-statistic: 8.075e+04 on 2 and 13 DF,  p-value: < 2.2e-16
       inside(result) {
         case Result(interceptCont, Seq(beta1Cont, beta2Cont), _) =>
           inside(interceptCont) {
