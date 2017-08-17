@@ -1797,7 +1797,7 @@ object Arima {
     require(lag > Natural.zero)
     require(d > Natural.zero)
     d match {
-      case Natural.one => Vec.fromSeq((0 to (dx.length - lag.toInt)).map(i => dx(i + lag.toInt) - dx(i)))
+      case Natural.one => Vec.fromSeq((0 until dx.length - lag.toInt).map(i => dx(i + lag.toInt) - dx(i)))
       case _ => diff(diff(dx, lag, d - Natural.one), lag, Natural.one)
     }
   }
