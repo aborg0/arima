@@ -1606,8 +1606,10 @@ import scalin.syntax.assign._
 import scalin.mutable._
 import scalin.mutable.dense._
 import scribe.Logging
-import spire.algebra.{Eq, Field, NRoot, Ring, Rig}
+import spire.algebra.{Eq, Field, NRoot, Rig, Ring}
+import spire.math.poly.RootFinder
 
+import scala.collection.breakOut
 import scala.collection.immutable.BitSet
 import scala.math.ScalaNumber
 import scala.reflect.ClassTag
@@ -1669,15 +1671,18 @@ case class ArimaResult[V: Eq : Field](coefficients: IndexedSeq[V], sigma2: V, va
 /**
   * Created by aborg on 20/05/2017.
   */
-case class Arima[@specialized(Double) V: Eq : Field: Pivot, ErrV <: ScalaNumber: Field: NRoot](x: Vec[V], order: Order = Order(),
-                                                                               seasonalParam: Option[Seasonal] = Some(Seasonal(Order(), None)),
-                                                                               var xReg: Option[Mat[V]] = None, includeMean: Boolean = true,
-                                                                               var transformPars: Boolean = true, var fixed: Option[IndexedSeq[Option[V]]] = None,
-                                                                               init: Option[IndexedSeq[V]] = None,
-                                                                               method: ArimaLearningMethod = CssMl, nCondOpt: Option[Natural],
-                                                                               ssInit: SsInit = Rossignol2011,
-                                                                               optimizationMethod: OptimizationMethod = BFGS,
-                                                                               optimizationControl: Seq[Any] = Seq(), kappa: Double = 1e6)(implicit val conv: Convert[V, ErrV]) extends Logging {
+case class Arima[@specialized(Double) V: Eq : Field : Pivot : ClassTag : RootFinder: spire.algebra.Order,
+ErrV <: ScalaNumber : Field : NRoot](
+                                      x: Vec[V], order: Order = Order(),
+                                      seasonalParam: Option[Seasonal] = Some(Seasonal(Order(), None)),
+                                      var xReg: Option[Mat[V]] = None, includeMean: Boolean = true,
+                                      var transformPars: Boolean = true, var fixed: Option[IndexedSeq[Option[V]]] = None,
+                                      init: Option[IndexedSeq[V]] = None,
+                                      method: ArimaLearningMethod = CssMl, nCondOpt: Option[Natural],
+                                      ssInit: SsInit = Rossignol2011,
+                                      optimizationMethod: OptimizationMethod = BFGS,
+                                      var optimizationControl: Map[String, Any] = Map.empty, kappa: Double = 1e6)(
+  implicit val conv: Convert[V, ErrV]) extends Logging {
 
   import Arima._
 
@@ -1687,6 +1692,7 @@ case class Arima[@specialized(Double) V: Eq : Field: Pivot, ErrV <: ScalaNumber:
   private val seasonalPeriod = seasonal.period.get
   val arma: IndexedSeq[Natural] = Vector(order.p, order.q, seasonal.order.p, seasonal.order.q, seasonalPeriod,
     order.d, seasonal.order.d)
+  val Seq(armaR1/*p*/, armaR2/*q*/, armaR3/*sp*/, armaR4/*sq*/, armaR5/*sper*/, armaR6/*d*/, armaR7/*sd*/) = arma
   val nArma: Natural = arma.take(4).reduce(_ + _)
   val `1, -1`: Vec[V] = oneMinusOne
   val `1, seasonalPeriod-1 0s, -1`: DenseVec[V] = Vec.ones[V](1) + Vec.zeros[V](seasonalPeriod.toInt - 1) + Vec[V](
@@ -1727,6 +1733,7 @@ case class Arima[@specialized(Double) V: Eq : Field: Pivot, ErrV <: ScalaNumber:
       transformPars = false
     }
   }
+  // Using after initialization init0 as init!
   var init0: Vec[V] = Vec.tabulate(nArma.toInt)(_ => Ring.zero[V])
   var parScale: Vec[ErrV] = Vec.tabulate(nArma.toInt)(_ => Ring.one[ErrV])
 
@@ -1756,9 +1763,45 @@ case class Arima[@specialized(Double) V: Eq : Field: Pivot, ErrV <: ScalaNumber:
     val sumNAs = 0
     nUsed = x.length - sumNAs - delta.length
     init0 = init0 ++ Vec(fit.beta.map(_.value): _*)
-//    val ses = fit.beta.map(_.stdError).sum
-//    parScale = parScale ++ Vec(10 * ses)
+    val ses10: Vec[ErrV] = Vec(fit.beta.map(coeff => coeff.stdError * 10d): _*)
+    parScale = parScale ++ ses10
     //dxReg.inverse
+  }
+  if (nUsed <= 0) throw new IllegalArgumentException("Too few observations")
+  init.foreach(initV => {
+    if (initV.length != init0.length)
+      throw new IllegalStateException(s"`init` has wrong length: ${initV.length} vs ${init0.length}")
+    // Missing values -not supported- in init should come from init0
+
+    method match {
+      case Ml =>
+        if (arma(0) > Natural.zero && !arCheck(initV.take(arma(0).toInt)))
+          throw new IllegalArgumentException("Non-stationary AR part")
+        if (armaR3 > Natural.zero && !arCheck(initV.slice((armaR1 + armaR2).toInt, (armaR1 + armaR2 + armaR3).toInt)))
+          throw new IllegalArgumentException("Non-stationary seasional AR part")
+        if (transformPars) {
+          init0 = arimaInvTrans(initV, arma)
+        }
+      case _ => // Nothing to do
+    }
+  })
+  // init0 is to be used from now on
+  var coef = fixed.get
+  if (optimizationControl.contains("parscale")) {
+    optimizationControl = optimizationControl.updated("parscale", mask)
+  }
+
+  // TODO implement
+  def arimaInvTrans(initV: IndexedSeq[V], arma: IndexedSeq[Natural]): Vec[V] = ???
+
+  def arCheck(ar: IndexedSeq[V]): Boolean = {
+    val p = ar.lastIndexWhere(_ != Ring.zero[V])
+    p == 0 || {
+      val coeffs: Map[Int, V] = (ar.take(p).zipWithIndex.map{case (v, i) => (i + 1) -> -v} :+ (0 -> Ring.one[V]))(
+        breakOut)
+      // TODO find complex roots and check their length
+      Polynomial(coeffs).roots.forall(_ > Ring.one[V])
+    }
   }
 }
 
@@ -1792,6 +1835,7 @@ object Arima {
 
   case class SVD[V: Eq: Field](u: Mat[V], d: Vec[V]/*Diag[V] would be better*/, v: Mat[V])
 
+  // TODO implement
   def svd[V: Eq: Field](matrix: Mat[V]): SVD[V] = ???
   def diff[V: Eq: Field](dx: Vec[V], lag: Natural, d: Natural): Vec[V] = {
     require(lag > Natural.zero)
