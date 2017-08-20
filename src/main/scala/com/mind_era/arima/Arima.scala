@@ -1606,10 +1606,10 @@ import scalin.syntax.assign._
 import scalin.mutable._
 import scalin.mutable.dense._
 import scribe.Logging
-import spire.algebra.{Eq, Field, NRoot, Rig, Ring}
+import spire.algebra._
 import spire.math.poly.RootFinder
 
-import scala.collection.breakOut
+import scala.collection.{breakOut, mutable}
 import scala.collection.immutable.BitSet
 import scala.math.ScalaNumber
 import scala.reflect.ClassTag
@@ -1671,7 +1671,7 @@ case class ArimaResult[V: Eq : Field](coefficients: IndexedSeq[V], sigma2: V, va
 /**
   * Created by aborg on 20/05/2017.
   */
-case class Arima[@specialized(Double) V: Eq : Field : Pivot : ClassTag : RootFinder: spire.algebra.Order,
+case class Arima[@specialized(Double) V: Eq : Field : Pivot : ClassTag : RootFinder: spire.algebra.Order: Trig,
 ErrV <: ScalaNumber : Field : NRoot](
                                       x: Vec[V], order: Order = Order(),
                                       seasonalParam: Option[Seasonal] = Some(Seasonal(Order(), None)),
@@ -1791,9 +1791,6 @@ ErrV <: ScalaNumber : Field : NRoot](
     optimizationControl = optimizationControl.updated("parscale", mask)
   }
 
-  // TODO implement
-  def arimaInvTrans(initV: IndexedSeq[V], arma: IndexedSeq[Natural]): Vec[V] = ???
-
   def arCheck(ar: IndexedSeq[V]): Boolean = {
     val p = ar.lastIndexWhere(_ != Ring.zero[V])
     p == 0 || {
@@ -1847,5 +1844,102 @@ object Arima {
   }
   def diff[V: Eq: Field](dx: Mat[V], lag: Natural, d: Natural): Mat[V] = {
     dx.colSeq.map(diff(_, lag, d).toColMat).reduce((col1, col2) => col1.horzcat(col2))
+  }
+
+  def invParTrans[V: Field: Trig](p: Natural, phi: IndexedSeq[V]): scala.IndexedSeq[V] = {
+//    import spire.syntax.ring._
+    require(p > Natural.zero)
+    val res = phi.toBuffer
+    val work = phi.toBuffer
+    var a: V = Ring.zero[V]
+    for(j <- p.toInt - 1 to  0) {
+      a = res(j)
+      for(k <- 0 until j) {
+        work(k) = (res(k) + a * res(j - k - 1)) / (1 - a * a)
+      }
+      for(k <- 0 until j) res(k) = work(k)
+    }
+    res.map(tanh(_)).toIndexedSeq
+  }
+
+  case class PhiTheta[V](phi: IndexedSeq[V], theta: IndexedSeq[V])
+
+  def transPars[V: Field: Trig](in: IndexedSeq[V], arma: IndexedSeq[Natural], trans: Boolean): PhiTheta[V] = {
+    import _root_.scala.collection.mutable.{IndexedSeq => MutIndexedSeq}
+    val IndexedSeq(mp, mq, msp, msq, ns, _*) = arma
+    val p = mp + ns * msp
+    val q = mq + ns * msq
+    var params: IndexedSeq[V] = in.map(v => v)
+    if (trans) {
+      val n = mp + mq + msp + msq
+      if (mp > Natural.zero) {
+        params = parTrans(mp, in) ++ params.drop(mp.toInt)
+      }
+      val v = (mp + mq).toInt
+      if (msp > Natural.zero) {
+        params = params.take(v) ++ parTrans(msp, in.drop(v)) ++ params.drop(v + msp.toInt)
+      }
+    }
+    if (ns > Natural.zero) {
+      val phi = MutIndexedSeq(params.take(mp.toInt) ++ Seq.fill((p - mp).toInt)(Field.zero[V]): _*)
+      val theta = MutIndexedSeq(params.slice(mp.toInt, (mp + mq).toInt) ++ Seq.fill((q- mq).toInt)(Field.zero[V]): _*)
+      for (j <- 0 until msp.toInt) {
+        phi.updated((j + 1) * ns.toInt - 1, phi((j + 1) * ns.toInt - 1) + params(j +(mp + mq).toInt))
+        for (i <- 0 until mp.toInt) {
+          phi.updated((j + 1) * ns.toInt + i, phi((j + 1) * ns.toInt + i) - params(i) * params(j + (mp + mq).toInt))
+        }
+      }
+      for (j <- 0 until msq.toInt) {
+        theta.updated((j + 1) * ns.toInt - 1, theta((j + 1) * ns.toInt - 1)+ params(j + (mp + mq + msp).toInt))
+        for (i <- 0 until mq.toInt)
+          theta.updated((j + 1) * ns.toInt +i, theta((j + 1) * ns.toInt +i) + params(i + mp.toInt) * params(j + (mp + mq + msp).toInt))
+
+      }
+      PhiTheta(phi = IndexedSeq(phi: _*), theta = IndexedSeq(theta: _*))
+    } else {
+      PhiTheta(phi = params.take(mp.toInt), theta = params.slice(mp.toInt, (mp + mq).toInt))
+    }
+  }
+
+  def parTrans[V: Field: Trig](p: Natural, raw: IndexedSeq[V]): IndexedSeq[V] = {
+    val res = raw.map(tanh(_)).toBuffer
+    val work = mutable.Buffer[V]()
+    res.copyToBuffer(work)
+    for (j <- 1 until p.toInt) {
+      val a = res(j)
+      for (k <- 0 until j) {
+        work(k) -= a * res(j - k - 1)
+      }
+      for (k <- 0 until j) {
+        res(k) = work(k)
+      }
+    }
+    res.toIndexedSeq
+  }
+
+  def undoPars[V: Field: Trig](inp: IndexedSeq[V], arma: IndexedSeq[Natural]): Vec[V] = {
+    val IndexedSeq(p, q, sp, _*) = arma
+    var res = inp
+    if (p > Natural.zero) {
+      res = parTrans(p, inp)
+    }
+    val v = (p + q).toInt
+    if (sp > Natural.zero) {
+      res = res.take(v) ++ parTrans(sp, res.take(v))
+    }
+    Vec(res: _*)
+  }
+
+  def arimaInvTrans[V: Field: Trig](initV: IndexedSeq[V], arma: IndexedSeq[Natural]): Vec[V] = {
+    val IndexedSeq(p, q, sp, _*) = arma
+    var res = initV
+    if (p > 0) {
+      res = invParTrans(p, initV)
+    }
+    val v = (p + q).toInt
+    if (sp > 0) {
+      res = res.take(v) ++ invParTrans(sp, initV.take(v))
+    }
+    Vec(res: _*)
   }
 }
