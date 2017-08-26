@@ -1803,6 +1803,9 @@ ErrV <: ScalaNumber : Field : NRoot](
 }
 
 object Arima {
+  import spire.syntax._
+  def atanh[V: Trig: Field](x: V): V = log((Ring.one[V] + x) / (Ring.one[V] - x)) / (Ring.one[V] + Ring.one[V])
+
   private def oneMinusOne[V: Ring]: Vec[V] = Vec(Ring.one, Ring.negate(Rig.one))
   private def seasonalValue(seasonalParam: Option[Seasonal]): Seasonal = {
     seasonalParam.map(s => s.copy(period = Some(s.period.map(p =>
@@ -1852,14 +1855,17 @@ object Arima {
     val res = phi.toBuffer
     val work = phi.toBuffer
     var a: V = Ring.zero[V]
-    for(j <- p.toInt - 1 to  0) {
+    for(j <- Range.inclusive(p.toInt - 1, 1, -1)) {
       a = res(j)
       for(k <- 0 until j) {
         work(k) = (res(k) + a * res(j - k - 1)) / (1 - a * a)
       }
       for(k <- 0 until j) res(k) = work(k)
     }
-    res.map(tanh(_)).toIndexedSeq
+    for (j <- 0 until p.toInt) {
+      res.update(j, atanh(res(j)))
+    }
+    res.toIndexedSeq
   }
 
   case class PhiTheta[V](phi: IndexedSeq[V], theta: IndexedSeq[V])
@@ -1902,7 +1908,8 @@ object Arima {
   }
 
   def parTrans[V: Field: Trig](p: Natural, raw: IndexedSeq[V]): IndexedSeq[V] = {
-    val res = raw.map(tanh(_)).toBuffer
+    val res = raw.toBuffer
+    for (j <- 0 until p.toInt) res(j) = tanh(res(j))
     val work = mutable.Buffer[V]()
     res.copyToBuffer(work)
     for (j <- 1 until p.toInt) {
@@ -1925,7 +1932,7 @@ object Arima {
     }
     val v = (p + q).toInt
     if (sp > Natural.zero) {
-      res = res.take(v) ++ parTrans(sp, res.take(v))
+      res = res.take(v) ++ parTrans(sp, res.drop(v))
     }
     Vec(res: _*)
   }
@@ -1938,7 +1945,7 @@ object Arima {
     }
     val v = (p + q).toInt
     if (sp > 0) {
-      res = res.take(v) ++ invParTrans(sp, initV.take(v))
+      res = res.take(v) ++ invParTrans(sp, initV.drop(v))
     }
     Vec(res: _*)
   }
