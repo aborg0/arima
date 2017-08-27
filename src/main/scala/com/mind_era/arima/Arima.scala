@@ -1739,7 +1739,7 @@ ErrV <: ScalaNumber : Field : NRoot](
 
 
   if (ncxreg > 0) {
-    val origXreg: Boolean = ncxreg == 1 || (nArma.toInt until (nArma.toInt + ncxreg)).map(i => mask(i)).exists(v => v)
+    val origXreg: Boolean = ncxreg == 1 || (nArma.toInt until (nArma.toInt + ncxreg)).exists(i => mask(i))
     if (!origXreg) {
       val SVD(_, _, v) = svd(xReg.get)
       xReg = xReg.map(mat => mat * v)
@@ -1763,6 +1763,7 @@ ErrV <: ScalaNumber : Field : NRoot](
     val sumNAs = 0
     nUsed = x.length - sumNAs - delta.length
     init0 = init0 ++ Vec(fit.beta.map(_.value): _*)
+    // single value
     val ses10: Vec[ErrV] = Vec(fit.beta.map(coeff => coeff.stdError * 10d): _*)
     parScale = parScale ++ ses10
     //dxReg.inverse
@@ -1785,10 +1786,31 @@ ErrV <: ScalaNumber : Field : NRoot](
       case _ => // Nothing to do
     }
   })
+  def armaCss(p: IndexedSeq[V]): (ErrV, IndexedSeq[V]) = {
+    val par = fixed.getOrElse(IndexedSeq.empty).toBuffer
+    var idx = -1
+    par.indices.foreach(i => if (mask(i)) {
+      par.update(i, Some(p({idx += 1; idx})))
+    })
+    val trArma = transPars(par.map(_.get).toIndexedSeq, arma, trans = false)
+    if (ncxreg > 0) {
+      // TODO convolution for Mat?
+      x -= convolutionVec(xReg.get.rowSeq.head, Vec(par.slice(nArma.toInt, nArma.toInt + ncxreg).map(_.get): _*))
+    }
+    ???
+  }
   // init0 is to be used from now on
-  var coef = fixed.get
+  private[this] var coef: IndexedSeq[Option[V]] = fixed.get
   if (optimizationControl.contains("parscale")) {
     optimizationControl = optimizationControl.updated("parscale", mask)
+  }
+  if (method == ArimaLearningMethod.Css) {
+
+  } else { // CSS ML or ML
+    if (method == ArimaLearningMethod.CssMl) {
+
+    }
+
   }
 
   def arCheck(ar: IndexedSeq[V]): Boolean = {
@@ -1815,14 +1837,14 @@ object Arima {
         p).getOrElse(Natural.one)))).getOrElse(Seasonal(Order(), Some(Natural.one)))
   }
 
-  private def convolution[V:Rig:ClassTag](as: IndexedSeq[V], bs: IndexedSeq[V]): IndexedSeq[V] = {
-    val res = new Array[V](as.length + bs.length - 1)
+  private def convolution[V:Rig](as: IndexedSeq[V], bs: IndexedSeq[V]): IndexedSeq[V] = {
+    val res = mutable.Buffer.fill[V](as.length + bs.length - 1)(Rig.zero[V])
     for (i <- as.indices) {
       for (j <- bs.indices) {
         res(i + j) += as(i) * bs(j)
       }
     }
-    res
+    res.toIndexedSeq
   }
 
   private def convolutionVec[V: Rig](as: Vec[V], bs: Vec[V]): Vec[V] = {

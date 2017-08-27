@@ -70,7 +70,23 @@ class ArimaTransformTest extends FreeSpec with Inside {
     }
 
     "transPars" in {
-
+      //Browse[2]> .Call(C_ARIMA_transPars,
+      // as.double(c( 0.8047190, 0.2554128, 0.2209164, 0.2766926, 0.1256572, 0.125, 0.25)),
+      // as.integer(c(2, 0, 0, 0, 0, 0)), TRUE)
+      //  [[1]]
+      //[1] 0.50 0.25
+      //
+      //  [[2]]
+      //numeric(0)
+      val coeffs: IndexedSeq[Real] = IndexedSeq[Real](0.5, 0.25, .125, .25, .125, .125, .25)
+      val arma: IndexedSeq[Natural] = IndexedSeq(Natural(2), zero, Natural(3), zero, zero, zero)
+      val input: IndexedSeq[Real] = Arima.arimaInvTrans(coeffs, arma).toIndexedSeq
+      inside (Arima.transPars(input, arma, true)) {
+        case PhiTheta(phi, theta) =>
+          assert(phi(0) === .5)
+          assert(phi(1) === .25)
+          assert(theta === IndexedSeq.empty)
+      }
     }
 
     "arimaInvTrans" - {// See also invParTrans
