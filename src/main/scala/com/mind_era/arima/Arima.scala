@@ -1786,18 +1786,47 @@ ErrV <: ScalaNumber : Field : NRoot](
       case _ => // Nothing to do
     }
   })
-  def armaCss(p: IndexedSeq[V]): (ErrV, IndexedSeq[V]) = {
+
+  def arimaCss(y: Vec[V], arma: IndexedSeq[Natural], phi: IndexedSeq[V], theta: IndexedSeq[V], nCond: Natural): V = {
+    var ssq: V = Field.zero[V]
+    val n = y.length
+    val p = phi.length
+    val q = theta.length
+    var nu = Field.zero[V]
+    val w = y.toIndexedSeq.toBuffer
+    for (i <- 0 until arma(4).toInt)
+    for (l <- Range.inclusive(n - 1, 1, -1)) w(l) -= w(l - 1)
+    var ns = arma(3).toInt
+    for (i <- 0 until arma(5).toInt) {
+      for (l <- Range.inclusive(n - 1, ns.toInt, -1)) w(l) -= w(l - ns)
+    }
+    val resid = mutable.Buffer.fill(n)(Field.zero[V])
+    for (l <- nCond.toInt until n) {
+      var tmp: V = w(l)
+      for (j <- 0 until p) tmp -= phi(j) * w(l - j - 1)
+      for (j <- 0 until math.min(l - nCond.toInt, q))
+        tmp -= theta(j) * resid(l - j - 1)
+      resid(l) = tmp
+//      if (!ISNAN(tmp)) {
+        nu+= Field.one[V]
+        ssq += tmp * tmp
+//      }
+    }
+    ssq / nu
+  }
+
+  def armaCss(p: IndexedSeq[V]): V = {
     val par = fixed.getOrElse(IndexedSeq.empty).toBuffer
     var idx = -1
     par.indices.foreach(i => if (mask(i)) {
       par.update(i, Some(p({idx += 1; idx})))
     })
-    val trArma = transPars(par.map(_.get).toIndexedSeq, arma, trans = false)
+    val PhiTheta(phi, theta) = transPars(par.map(_.get).toIndexedSeq, arma, trans = false)
     if (ncxreg > 0) {
       // TODO convolution for Mat?
-      x -= convolutionVec(xReg.get.rowSeq.head, Vec(par.slice(nArma.toInt, nArma.toInt + ncxreg).map(_.get): _*))
+      //x -= convolutionVec(xReg.get.rowSeq.head, Vec(par.slice(nArma.toInt, nArma.toInt + ncxreg).map(_.get): _*))
     }
-    ???
+    0.5 * log(arimaCss(x, arma, phi, theta, nCond))
   }
   // init0 is to be used from now on
   private[this] var coef: IndexedSeq[Option[V]] = fixed.get
@@ -1828,7 +1857,7 @@ object Arima {
   import spire.syntax._
   def atanh[V: Trig: Field](x: V): V = log((Ring.one[V] + x) / (Ring.one[V] - x)) / (Ring.one[V] + Ring.one[V])
 
-  private def oneMinusOne[V: Ring]: Vec[V] = Vec(Ring.one, Ring.negate(Rig.one))
+  private def oneMinusOne[V: Ring]: Vec[V] = Vec(Ring.one[V], Ring.negate(Rig.one[V]))
   private def seasonalValue(seasonalParam: Option[Seasonal]): Seasonal = {
     seasonalParam.map(s => s.copy(period = Some(s.period.map(p =>
       if (p == Natural.zero)
@@ -1848,7 +1877,7 @@ object Arima {
   }
 
   private def convolutionVec[V: Rig](as: Vec[V], bs: Vec[V]): Vec[V] = {
-    val res: DenseVec[V] = scalin.mutable.DenseVec.fillConstant(as.length + bs.length - 1)(Rig.zero)
+    val res: DenseVec[V] = scalin.mutable.DenseVec.fillConstant(as.length + bs.length - 1)(Rig.zero[V])
     for (i <- 0 until as.length)
       for (j <- 0 until bs.length)
         res.set(i + j,  as(i) * bs(j))
