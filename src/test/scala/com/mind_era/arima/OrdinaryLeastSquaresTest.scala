@@ -4,9 +4,12 @@ import com.mind_era.arima.OrdinaryLeastSquares.{Coefficient, CoefficientErrors, 
 import org.scalatest._
 import org.scalatest.Inside._
 import org.scalatest.Matchers._
+//import org.scalactic.Tolerance._
+import org.scalactic.TypeCheckedTripleEquals._
 import org.scalactic._
 import spire.math.{Rational, Real}
 import spire.implicits._
+import spire.syntax.{ EqSyntax => _, EqOps => _ }
 import scalin.mutable._
 import scalin.mutable.dense._
 import scalin.syntax._
