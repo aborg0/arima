@@ -1596,7 +1596,7 @@ SEXP getQ0(SEXP sPhi, SEXP sTheta)
 */
 
 //import algebra.ring.{Ring}
-import cats.data._
+//import cats.data._
 import com.mind_era.arima.OrdinaryLeastSquares.XY
 import scalin.algos.RankFactorization
 import spire.implicits._
@@ -1854,6 +1854,8 @@ ErrV <: ScalaNumber : Field : NRoot](
 }
 
 object Arima {
+  def intMax(a: Int, b: Int): Int = new scala.runtime.RichInt(a).max(b)
+
   import spire.syntax._
   def atanh[V: Trig: Field](x: V): V = log((Ring.one[V] + x) / (Ring.one[V] - x)) / (Ring.one[V] + Ring.one[V])
 
@@ -1884,7 +1886,11 @@ object Arima {
     res
   }
 
-  case class SVD[V: Eq: Field](u: Mat[V], d: Vec[V]/*Diag[V] would be better*/, v: Mat[V])
+  /**
+    * Result of SVD (singular value decomposition). For a matrix m x n, u is m x m, d is a vector of length min(m, n),
+    * v is a matrix of n x n.
+    */
+  final case class SVD[V: Eq: Field](u: Mat[V], d: Vec[V]/*Diag[V] would be better*/, v: Mat[V])
 
   // TODO implement
   def svd[V: Eq: Field](matrix: Mat[V]): SVD[V] = ???
@@ -2000,4 +2006,156 @@ object Arima {
     }
     Vec(res: _*)
   }
+
+
+  def rossignol2011[V: Field](phi: Vec[V], theta: Vec[V], tolerance: V): Mat[V] = {
+    val p = phi.length
+    val q = theta.length
+    val r = intMax(p, q + 1)
+
+    val tTheta: Vec[V] = Vec(Field.one[V] +: theta.toIndexedSeq: _*)
+    var res = Mat.fillConstant(r, r)(Field.zero[V])
+    res += tTheta.toColMat * tTheta.toRowMat
+//    /* Q0 += A2 A2^T */
+//    for (i <- 0 to r)
+//    for (j <- i to r)
+//    for (k <- 0 to (q + 1 - j))
+//    res(i, j) += tTheta(i + k) * tTheta(j + k)
+//
+//    /* Symmetrize result */
+//    for (i <- 0 to r)
+//    for (j <- i+1 to r)
+//    res(j, i) += res(i, j)
+//      //java.util.Arrays.fill
+    res
+  }
+
+//  SEXP getQ0bis(SEXP sPhi, SEXP sTheta, SEXP sTol)
+//  {
+//    SEXP res;
+//    int p = LENGTH(sPhi), q = LENGTH(sTheta);
+//    double *phi = REAL(sPhi), *theta = REAL(sTheta); // tol = REAL(sTol)[0];
+//
+//    int i,j, r = max(p, q + 1);
+//
+//    /* Final result is block product
+//     *   Q0 = A1 SX A1^T + A1 SXZ A2^T + (A1 SXZ A2^T)^T + A2 A2^T ,
+//     * where A1 [i,j] = phi[i+j],
+//     *       A2 [i,j] = ttheta[i+j],  and SX, SXZ are defined below */
+//    PROTECT(res = allocMatrix(REALSXP, r, r));
+//    double *P = REAL(res);
+//
+//    /* Clean P */
+//    Memzero(P, r*r);
+//
+//    #ifdef DEBUG_Q0bis
+//    #define _ttheta(j) chk_V(ttheta, "ttheta", j, q+1)// was  r
+//    #define _tphi(j)   chk_V(tphi,   "tphi",   j, p+1)
+//    #define _rrz(j)    chk_V(rrz,    "rrz",    j, q)
+//    #else
+//    #define _ttheta(j) ttheta[j]
+//    #define _tphi(j) tphi[j]
+//    #define _rrz(j)  rrz [j]
+//    #endif
+//
+//    double *ttheta = (double *) R_alloc(q + 1, sizeof(double));
+//    /* Init ttheta = c(1, theta) */
+//    ttheta[0] = 1.;
+//    for (i = 1; i < q + 1; ++i) ttheta[i] = theta[i - 1];
+//
+//    if( p > 0 ) {
+//      int r2 = max(p + q, p + 1);
+//      SEXP sgam = PROTECT(allocMatrix(REALSXP, r2, r2)),
+//      sg = PROTECT(allocVector(REALSXP, r2));
+//      double *gam = REAL(sgam);
+//      double *g = REAL(sg);
+//      double *tphi = (double *) R_alloc(p + 1, sizeof(double));
+//      /* Init tphi = c(1, -phi) */
+//      tphi[0] = 1.;
+//      for (i = 1; i < p + 1; ++i) tphi[i] = -phi[i - 1];
+//
+//      /* Compute the autocovariance function of U, the AR part of X */
+//
+//      /* Gam := C1 + C2 ; initialize */
+//      Memzero(gam, r2*r2);
+//
+//      /* C1[E] */
+//      for (j = 0; j < r2; ++j)
+//      for (i = j; i < r2 && i - j < p + 1; ++i)
+//      gam[j*r2 + i] += _tphi(i-j);
+//
+//      /* C2[E] */
+//      for (i = 0; i < r2; ++i)
+//      for (j = 1; j < r2 && i + j < p + 1; ++j)
+//      gam[j*r2 + i] += _tphi(i+j);
+//
+//      /* Initialize g = (1 0 0 .... 0) */
+//      g[0] = 1.;
+//      for (i = 1; i < r2; ++i)
+//      g[i] = 0.;
+//
+//      /* rU = solve(Gam, g)  -> solve.default() -> .Internal(La_solve, .,)
+//       * --> fiddling with R-objects -> C and then F77_CALL(.) of dgesv, dlange, dgecon
+//       * FIXME: call these directly here, possibly even use 'info' instead of error(.)
+//       * e.g., in case of exact singularity.
+//       */
+//      SEXP callS = PROTECT(lang4(install("solve.default"), sgam, sg, sTol)),
+//      su = PROTECT(eval(callS, R_BaseEnv));
+//      double *u = REAL(su);
+//      /* SX = A SU A^T */
+//      /* A[i,j]  = ttheta[j-i] */
+//      /* SU[i,j] = u[abs(i-j)] */
+//      /* Q0 += ( A1 SX A1^T == A1 A SU A^T A1^T) */
+//      // (relying on good compiler optimization here:)
+//      for (i = 0; i < r; ++i)
+//      for (j = i; j < r; ++j)
+//      for (int k = 0; i + k < p; ++k)
+//      for (int L = k; L - k < q + 1; ++L)
+//      for (int m = 0; j + m < p; ++m)
+//      for (int n = m; n - m < q + 1; ++n)
+//      P[r*i + j] += phi[i + k] * phi[j + m] *
+//        _ttheta(L - k) * _ttheta(n - m) * u[abs(L - n)];
+//      UNPROTECT(4);
+//      /* Compute correlation matrix between X and Z */
+//      /* forwardsolve(C1, g) */
+//      /* C[i,j] = tphi[i-j] */
+//      /* g[i] = _ttheta(i) */
+//      double *rrz = (double *) R_alloc(q, sizeof(double));
+//      if(q > 0) {
+//        for (i = 0; i < q; ++i) {
+//          rrz[i] = _ttheta(i);
+//          for (j = max(0, i - p); j < i; ++j)
+//          rrz[i] -= _rrz(j) * _tphi(i-j);
+//        }
+//      }
+//
+//      /* Q0 += A1 SXZ A2^T + (A1 SXZ A2^T)^T */
+//      /* SXZ[i,j] = rrz[j-i-1], j > 0 */
+//      for (i = 0; i < r; ++i)
+//      for (j = i; j < r; ++j) {
+//        int k, L;
+//        for (k = 0; i + k < p; ++k)
+//        for (L = k+1; j + L < q + 1; ++L)
+//        P[r*i + j] += phi[i + k] * _ttheta(j + L) * _rrz(L - k - 1);
+//        for (k = 0; j + k < p; ++k)
+//        for (L = k+1; i + L < q + 1; ++L)
+//        P[r*i + j] += phi[j + k] * _ttheta(i + L) * _rrz(L - k - 1);
+//      }
+//    } // end if(p > 0)
+//
+//    /* Q0 += A2 A2^T */
+//    for (i = 0; i < r; ++i)
+//    for (j = i; j < r; ++j)
+//    for (int k = 0; j + k < q + 1; ++k)
+//    P[r*i + j] += _ttheta(i + k) * _ttheta(j + k);
+//
+//    /* Symmetrize result */
+//    for (i = 0; i < r; ++i)
+//    for (j = i+1; j < r; ++j)
+//    P[r*j + i] = P[r*i + j];
+//
+//    UNPROTECT(1);
+//    return res;
+//  }
+
 }

@@ -3,7 +3,7 @@ package com.mind_era.arima
 /**
   * Created by aborg on 04/06/2017.
   */
-case class SingleValue[V] private(private val v: V) extends IndexedSeq[V] {
+final case class SingleValue[V] private(private val v: V) extends IndexedSeq[V] {
   override def length: Int = 1
 
   override def apply(idx: Int): V = {
