@@ -6,7 +6,12 @@ scalaVersion := "2.12.6"
 
 moduleName := "com.github.aborg0"
 
-libraryDependencies += "net.alasc" %% "scalin-core" % "0.14.1.2-SNAPSHOT"
+resolvers ++= Seq(
+  "bintray/denisrosset/maven" at "https://dl.bintray.com/denisrosset/maven",
+  Resolver.sonatypeRepo("snapshots")
+)
+
+libraryDependencies += "net.alasc" %% "scalin-core" % "0.16.0.0"
 
 libraryDependencies += "org.scalactic" %% "scalactic" % "3.0.4"
 

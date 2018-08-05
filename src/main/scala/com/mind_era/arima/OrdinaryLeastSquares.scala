@@ -4,8 +4,9 @@ import algebra.ring.{Field, Ring}
 import com.mind_era.arima.OrdinaryLeastSquares.XY
 
 import scala.math.Numeric._
-import scalin.{DenseMat, Pivot}
+import scalin.Pivot
 import scalin.algos.Inverse
+import scalin.generic.DenseMat
 import scalin.mutable._
 import spire.algebra.{Eq, NRoot}
 import spire.implicits._

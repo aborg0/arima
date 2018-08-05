@@ -1686,7 +1686,7 @@ ErrV <: ScalaNumber : Field : NRoot](
 
   import Arima._
 
-  val series: DenseVec[V] = x.toVec
+  val series: DenseVec[V] = x.to[DenseVec[V]]
   val n: Int = series.length
   val seasonal: Seasonal = seasonalValue(seasonalParam)
   private val seasonalPeriod = seasonal.period.get
